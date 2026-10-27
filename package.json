@@ -1,0 +1,20 @@
+{
+  "name": "ma-jod",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI meeting notetaker bot: joins Microsoft Teams as a guest and records the meeting audio",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "ma-jod-bot": "src/bot.js"
+  },
+  "scripts": {
+    "bot": "node src/bot.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}
