@@ -1,6 +1,6 @@
 // Checks the recording pipeline without Teams: two RTCPeerConnections inside
-// one page loop an oscillator tone to each other, and captureInit must record
-// the received audio into a playable WebM file.
+// one page loop an oscillator tone to each other (or the page plays a tone
+// through Web Audio), and captureInit must record it into a playable WebM file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -26,9 +26,16 @@ const LOOPBACK_PAGE = `<!doctype html><audio id="out" autoplay></audio><script>
     await b.setLocalDescription(await b.createAnswer());
     await a.setRemoteDescription(b.localDescription);
   };
+  // Plays a tone straight to the speakers, the way a client that decodes
+  // audio itself would, with no WebRTC track or media element involved.
+  window.playWebAudio = () => {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    osc.connect(ctx.destination); osc.start();
+  };
 </script>`;
 
-test('records remote WebRTC audio to a playable webm', { timeout: 60_000 }, async () => {
+async function record(startFn) {
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
   try {
     const page = await browser.newPage();
@@ -40,25 +47,40 @@ test('records remote WebRTC audio to a playable webm', { timeout: 60_000 }, asyn
     await page.route('http://majod.test/', (r) => r.fulfill({ contentType: 'text/html', body: LOOPBACK_PAGE }));
     await page.goto('http://majod.test/');
 
-    await page.evaluate(() => window.startCall());
+    await page.evaluate(startFn);
     await page.waitForTimeout(4000);
     await page.evaluate(() => window.__majod.stop());
 
     assert.ok(events.some((e) => e.type === 'recording-started'), 'recording should start');
-    assert.ok(chunks.length >= 2, `expected several chunks, got ${chunks.length}`);
-
-    const file = join(mkdtempSync(join(tmpdir(), 'majod-')), 'audio.webm');
-    writeFileSync(file, Buffer.concat(chunks));
-    const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', file])
-      .toString()
-      .trim();
-    assert.equal(probe, 'opus');
-
-    // The tone must actually be in the file, not silence.
-    const stats = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', 'volumedetect', '-f', 'null', '-']).stderr.toString();
-    const meanDb = Number(/mean_volume: (-?[\d.]+) dB/.exec(stats)?.[1]);
-    assert.ok(meanDb > -40, `audio looks silent (mean ${meanDb} dB)`);
+    return { chunks, events };
   } finally {
     await browser.close();
   }
+}
+
+function assertAudible(chunks) {
+  assert.ok(chunks.length >= 2, `expected several chunks, got ${chunks.length}`);
+
+  const file = join(mkdtempSync(join(tmpdir(), 'majod-')), 'audio.webm');
+  writeFileSync(file, Buffer.concat(chunks));
+  const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', file])
+    .toString()
+    .trim();
+  assert.equal(probe, 'opus');
+
+  // The tone must actually be in the file, not silence.
+  const stats = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', 'volumedetect', '-f', 'null', '-']).stderr.toString();
+  const meanDb = Number(/mean_volume: (-?[\d.]+) dB/.exec(stats)?.[1]);
+  assert.ok(meanDb > -40, `audio looks silent (mean ${meanDb} dB)`);
+}
+
+test('records remote WebRTC audio to a playable webm', { timeout: 60_000 }, async () => {
+  const { chunks } = await record(() => window.startCall());
+  assertAudible(chunks);
+});
+
+test('records audio the page plays through Web Audio', { timeout: 60_000 }, async () => {
+  const { chunks, events } = await record(() => window.playWebAudio());
+  assert.ok(events.some((e) => e.type === 'audio-track' && e.kind === 'webaudio'), 'web audio tap should attach');
+  assertAudible(chunks);
 });
