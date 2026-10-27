@@ -14,11 +14,14 @@ const SEL = {
     'input[data-tid="prejoin-display-name-input"]',
     'input[placeholder*="name" i]',
   ],
+  // The toggles are <input type=checkbox role=switch>; :checked reads the live property.
   micOn: [
+    'input[data-tid="toggle-mute"]:checked',
     '[data-tid="toggle-mute"][aria-checked="true"]',
-    'role=switch[name=/microphone/i][checked=true]',
+    'role=switch[name=/mute mic|microphone/i][checked=true]',
   ],
   cameraOn: [
+    'input[data-tid="toggle-video"]:checked',
     '[data-tid="toggle-video"][aria-checked="true"]',
     'role=switch[name=/camera|video/i][checked=true]',
   ],
@@ -33,7 +36,8 @@ const SEL = {
   ],
 };
 
-const LOBBY_TEXT = /someone in the meeting should let you in soon|waiting for (the organizer|someone) to let you in/i;
+const LOBBY_TEXT = /someone (in the meeting )?(should|will) let you in (soon|shortly)|waiting for (the organizer|someone) to let you in/i;
+const CONNECT_FAILED_TEXT = /sorry, we couldn't connect you|we couldn't connect you/i;
 const DENIED_TEXT = /you've been denied|sorry, but you were denied access|no one responded to your request/i;
 const ENDED_TEXT = /the meeting has ended|meeting ended|you've been removed|you were removed|you left the meeting|thanks for joining/i;
 const ALONE_TEXT = /you're the only one here|waiting for others to join/i;
@@ -61,6 +65,14 @@ async function bodyText(page) {
   return page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
 }
 
+/**
+ * Teams only accepts letters, numbers, spaces and - ' . _ @ in a guest name
+ * and keeps "Join now" disabled otherwise, so drop anything else.
+ */
+export function sanitizeName(name) {
+  return name.replace(/[^\p{L}\p{M}\p{N} \-'._@]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -81,15 +93,21 @@ export async function joinMeeting(page, { url, botName, lobbyTimeoutMs, log }) {
 
   const name = await firstVisible(page, SEL.nameInput, 60_000);
   if (!name) throw new Error('pre-join screen did not appear (name box not found)');
-  await name.fill(botName);
+  const guestName = sanitizeName(botName);
+  if (guestName !== botName) log({ type: 'name-sanitized', from: botName, to: guestName });
+  await name.fill(guestName);
 
   for (const toggle of [SEL.micOn, SEL.cameraOn]) {
     const on = await firstVisible(page, toggle, 2000);
-    if (on) await on.click().catch(() => {});
+    // The switch input sits under its styled track, so a plain click is intercepted.
+    if (on) await on.click({ force: true }).catch(() => {});
   }
 
   const join = await firstVisible(page, SEL.joinNow, 10_000);
   if (!join) throw new Error('"Join now" button not found');
+  if (!(await join.isEnabled({ timeout: 5000 }).catch(() => false))) {
+    throw new Error('"Join now" is disabled (Teams rejected the guest name?)');
+  }
   await join.click();
   log({ type: 'join-clicked' });
 
@@ -102,6 +120,7 @@ export async function joinMeeting(page, { url, botName, lobbyTimeoutMs, log }) {
     }
     const text = await bodyText(page);
     if (DENIED_TEXT.test(text)) throw new Error('organizer denied entry');
+    if (CONNECT_FAILED_TEXT.test(text)) throw new Error("Teams could not connect the call (\"Sorry, we couldn't connect you\")");
     if (!announcedLobby && LOBBY_TEXT.test(text)) {
       announcedLobby = true;
       log({ type: 'in-lobby' });

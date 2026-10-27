@@ -15,7 +15,7 @@ import { joinMeeting, waitForEnd, leaveMeeting } from './teams.js';
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    name: { type: 'string', default: 'Ma-Jod AI (บันทึกประชุม)' },
+    name: { type: 'string', default: 'Ma-Jod AI - บันทึกประชุม' },
     out: { type: 'string', default: 'recordings' },
     'lobby-minutes': { type: 'string', default: '10' },
     'alone-minutes': { type: 'string', default: '3' },
