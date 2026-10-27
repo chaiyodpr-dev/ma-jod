@@ -25,11 +25,15 @@ export function captureInit({ timesliceMs = 10_000, levelIntervalMs = 15_000 } =
     recorder: null,
     sources: [],
     trackIds: new Set(),
+    bytes: 0,
     startedAt: null,
     pending: Promise.resolve(),
   };
   window.__majod = state;
   const emit = (e) => window.__majodEvent?.(e);
+  // Teams sometimes reloads the page (e.g. when the meeting starts); each
+  // load starts a fresh capture, so make the reloads visible in the log.
+  if (window.top === window) emit({ type: 'page-loaded', url: location.href.split('?')[0] });
 
   const toBase64 = (bytes) => {
     let s = '';
@@ -55,6 +59,7 @@ export function captureInit({ timesliceMs = 10_000, levelIntervalMs = 15_000 } =
     const rec = new MediaRecorder(state.dest.stream, { mimeType: 'audio/webm;codecs=opus' });
     rec.ondataavailable = (e) => {
       if (!e.data || e.data.size === 0) return;
+      state.bytes += e.data.size;
       // Chain so chunks reach Node in order, and stop() can wait for the last one.
       state.pending = state.pending
         .then(() => e.data.arrayBuffer())
@@ -75,7 +80,15 @@ export function captureInit({ timesliceMs = 10_000, levelIntervalMs = 15_000 } =
       s.peak = 0;
       return { kind: s.kind, id: s.id, peakDb: db, muted: s.track?.muted, state: s.track?.readyState };
     });
-    emit({ type: 'audio-level', sources: levels });
+    // Keep the mixer running; a suspended context feeds the recorder nothing.
+    if (state.ctx.state !== 'running') state.ctx.resume().catch(() => {});
+    emit({
+      type: 'audio-level',
+      ctx: state.ctx.state,
+      recorder: state.recorder?.state,
+      bytes: state.bytes,
+      sources: levels,
+    });
   };
 
   // The bot's own (fake) microphone must never end up in the recording.

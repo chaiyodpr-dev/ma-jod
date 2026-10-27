@@ -36,7 +36,7 @@ const SEL = {
   ],
 };
 
-const LOBBY_TEXT = /someone (in the meeting )?(should|will) let you in (soon|shortly)|waiting for (the organizer|someone) to let you in/i;
+const LOBBY_TEXT = /someone (in the meeting )?(should|will) let you in (soon|shortly|when the meeting starts)|waiting for (the organizer|someone) to let you in/i;
 const CONNECT_FAILED_TEXT = /sorry, we couldn't connect you|we couldn't connect you/i;
 const DENIED_TEXT = /you've been denied|sorry, but you were denied access|no one responded to your request/i;
 const ENDED_TEXT = /the meeting has ended|meeting ended|you've been removed|you were removed|you left the meeting|thanks for joining/i;
